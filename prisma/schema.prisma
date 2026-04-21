@@ -1,0 +1,151 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// OurWatch — Barangay Incident Reporting System
+// This schema mirrors the ERD submitted to the instructor:
+//   ACCOUNT  ·  CITIZEN  ·  BRGY_OFFICIAL  ·  COMMUNITY
+//   REPORT   ·  UPDATEDREPORT  ·  SUBMIT_REPORT_TO
+// Table/column names are mapped to the exact ERD spelling via @@map / @map.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ── ACCOUNT ──────────────────────────────────────────────────────────────────
+// Login entity. Each Account represents one login — it belongs to either a
+// Citizen (via Contact_Number) or a Barangay Official (via Official_ID).
+// `email` and `password_hash` are added for functional authentication
+// (the ERD did not include them explicitly).
+model Account {
+  accountId          Int           @id @default(autoincrement()) @map("Account_ID")
+  name               String        @db.VarChar(191)
+  email              String        @unique @db.VarChar(191)
+  passwordHash       String        @map("password_hash") @db.VarChar(191)
+  address            String?       @map("Address") @db.VarChar(500)
+  sex                String?       @db.VarChar(20)
+  contactInformation String?       @map("contact_information") @db.VarChar(50)
+
+  officialId         Int?          @unique @map("Official_ID")
+  official           BrgyOfficial? @relation(fields: [officialId], references: [officialId], onDelete: SetNull)
+
+  contactNumber      String?       @unique @map("Contact_Number") @db.VarChar(30)
+  citizen            Citizen?      @relation(fields: [contactNumber], references: [contactNumber], onDelete: SetNull)
+
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  @@map("ACCOUNT")
+}
+
+// ── CITIZEN ──────────────────────────────────────────────────────────────────
+// A resident who can submit incident reports.
+// Per your ERD, Contact_Number is the primary key.
+model Citizen {
+  contactNumber    String   @id @map("Contact_Number") @db.VarChar(30)
+  citizenId        Int      @unique @default(autoincrement()) @map("Citizen_ID")
+  fullName         String   @map("Full_name") @db.VarChar(191)
+  address          String?  @map("Address") @db.VarChar(500)
+  userCredentials  String?  @map("User_Credentials") @db.VarChar(255)
+  registrationDate DateTime @default(now()) @map("Registration_Date")
+
+  account          Account?
+  reports          Report[]
+  communities      Community[]
+  submitReportTos  SubmitReportTo[]
+
+  @@map("CITIZEN")
+}
+
+// ── BRGY_OFFICIAL ────────────────────────────────────────────────────────────
+// A barangay captain / official who verifies and updates incident reports.
+model BrgyOfficial {
+  officialId       Int        @id @default(autoincrement()) @map("Official_ID")
+  officialName     String     @map("Official_name") @db.VarChar(191)
+  position         String     @db.VarChar(100)
+  contactInfo      String?    @map("Contact_Info") @db.VarChar(100)
+  accountStatus    String     @default("Active") @map("Account_Status") @db.VarChar(50)
+
+  communityId      Int?       @map("Community_ID")
+  community        Community? @relation(fields: [communityId], references: [communityId], onDelete: SetNull)
+
+  account          Account?
+  submitReportTos  SubmitReportTo[]
+
+  @@map("BRGY_OFFICIAL")
+}
+
+// ── COMMUNITY ────────────────────────────────────────────────────────────────
+// A barangay / area that an official oversees and that citizens belong to.
+model Community {
+  communityId          Int       @id @default(autoincrement()) @map("Community_ID")
+  areaName             String    @map("Area_Name") @db.VarChar(191)
+  demographicsSummary  String?   @map("Demographics_Summary") @db.Text
+  publicStatisticsView String?   @map("Public_Statistics_View") @db.Text
+
+  contactNumber        String?   @map("Contact_Number") @db.VarChar(30)
+  citizen              Citizen?  @relation(fields: [contactNumber], references: [contactNumber], onDelete: SetNull)
+
+  officials            BrgyOfficial[]
+
+  @@map("COMMUNITY")
+}
+
+// ── REPORT ───────────────────────────────────────────────────────────────────
+// An incident report filed by a Citizen.
+// `photoUrl` (Cloudinary image URL) is added beyond the ERD for functionality.
+model Report {
+  reportId      Int     @id @default(autoincrement()) @map("report_ID")
+  typeOfReport  String  @map("type_of_report") @db.VarChar(100)
+  description   String  @map("Description") @db.Text
+  location      String  @map("Location") @db.VarChar(500)
+  photoUrl      String? @map("Photo_URL") @db.VarChar(500)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  contactNumber String  @map("Contact_Number") @db.VarChar(30)
+  citizen       Citizen @relation(fields: [contactNumber], references: [contactNumber], onDelete: Cascade)
+
+  updatedReport UpdatedReport?
+  submissions   SubmitReportTo[]
+
+  @@index([contactNumber])
+  @@index([createdAt])
+  @@map("REPORT")
+}
+
+// ── UPDATEDREPORT ────────────────────────────────────────────────────────────
+// 1-to-1 extension of REPORT tracking status and action taken by officials.
+model UpdatedReport {
+  reportId    Int      @id @map("Report_ID")
+  report      Report   @relation(fields: [reportId], references: [reportId], onDelete: Cascade)
+  status      String   @default("Pending") @map("Status") @db.VarChar(50)
+  actionTaken String?  @map("Action_Taken") @db.Text
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("UPDATEDREPORT")
+}
+
+// ── SUBMIT_REPORT_TO ─────────────────────────────────────────────────────────
+// Junction table: tracks which citizen submitted which report to which official.
+// ERD shows composite PK (Contact_Number, Official_ID); reportId is added so
+// the same citizen-official pair can route multiple different reports.
+model SubmitReportTo {
+  contactNumber String @map("Contact_Number") @db.VarChar(30)
+  officialId    Int    @map("Official_ID")
+  reportId      Int    @map("Report_ID")
+
+  citizen       Citizen      @relation(fields: [contactNumber], references: [contactNumber], onDelete: Cascade)
+  official      BrgyOfficial @relation(fields: [officialId], references: [officialId], onDelete: Cascade)
+  report        Report       @relation(fields: [reportId], references: [reportId], onDelete: Cascade)
+
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  @@id([contactNumber, officialId, reportId])
+  @@index([officialId])
+  @@index([reportId])
+  @@map("SUBMIT_REPORT_TO")
+}
