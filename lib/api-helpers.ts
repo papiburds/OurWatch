@@ -6,7 +6,7 @@
 //     flat Incident shape the React UI already expects.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";

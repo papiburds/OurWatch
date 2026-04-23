@@ -8,7 +8,7 @@
 //   DEFAULT_CAPTAIN_POSITION
 
 import { PrismaClient } from "@prisma/client";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
