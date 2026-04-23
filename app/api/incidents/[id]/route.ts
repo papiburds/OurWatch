@@ -4,7 +4,7 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/api-helpers";
+import { getCurrentUser, isAdminRole } from "@/lib/api-helpers";
 import type { IncidentStatus } from "@/lib/types";
 
 const VALID_STATUSES: IncidentStatus[] = ["Pending", "Verified", "Resolved", "Rejected"];
@@ -15,9 +15,9 @@ export async function PATCH(
 ) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (user.role !== "Captain") {
+  if (!isAdminRole(user.role)) {
     return NextResponse.json(
-      { error: "Only barangay officials can update incidents." },
+      { error: "Only administrative users can update incidents." },
       { status: 403 },
     );
   }
@@ -68,9 +68,9 @@ export async function DELETE(
 ) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
-  if (user.role !== "Captain") {
+  if (!isAdminRole(user.role)) {
     return NextResponse.json(
-      { error: "Only barangay officials can delete incidents." },
+      { error: "Only administrative users can delete incidents." },
       { status: 403 },
     );
   }

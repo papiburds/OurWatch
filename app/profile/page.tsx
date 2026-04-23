@@ -90,7 +90,12 @@ export default function ProfilePage() {
     }
   };
 
-  const roleLabel = user?.role === "Captain" ? "Barangay Official" : "Citizen";
+  const roleLabel =
+    user?.role === "Captain"
+      ? "Barangay Official"
+      : user?.role === "Admin"
+      ? "Administrator"
+      : "Citizen";
   const initials  = (user?.fullName || "U").split(" ").map((w) => w[0] || "").join("").toUpperCase().slice(0, 2);
 
   return (

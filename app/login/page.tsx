@@ -26,7 +26,7 @@ export default function LoginPage() {
     try {
       const user = await loginUser(email, password);
       showToast("Login successful.", "success");
-      router.push(user.role === "Captain" ? "/monitoring" : "/dashboard");
+      router.push(user.role === "Citizen" ? "/dashboard" : "/monitoring");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Connection error. Please try again.";
       setError(message || "Invalid email or password.");

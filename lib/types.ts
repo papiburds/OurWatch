@@ -5,7 +5,7 @@
 // to know about the underlying schema.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type UserRole = "Citizen" | "Captain";
+export type UserRole = "Citizen" | "Captain" | "Admin";
 
 export interface AppUser {
   uid: string;            // Account_ID (stringified)

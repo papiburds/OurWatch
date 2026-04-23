@@ -96,19 +96,24 @@ export default function AppShell({ activePage }: Props) {
   const handleNotifClick = (id: string) => {
     markOneRead(id);
     setBellOpen(false);
-    const target = user?.role === "Captain" ? "/monitoring" : "/incidents";
+    const target = user?.role === "Citizen" ? "/incidents" : "/monitoring";
     router.push(target);
   };
 
   const initials = (user?.fullName || "U")
     .split(" ").map((w) => w[0] || "").join("").toUpperCase().slice(0, 2);
 
-  const roleLabel = user?.role === "Captain" ? "Barangay Official" : "Citizen";
+  const roleLabel =
+    user?.role === "Captain"
+      ? "Barangay Official"
+      : user?.role === "Admin"
+        ? "Administrative User"
+        : "Citizen";
 
   // Barangay Officials only get the Monitoring dashboard.
   // Citizens keep their full set of pages.
   const navItems: { href: string; label: string; key: ActivePage }[] =
-    user?.role === "Captain"
+    user?.role && user.role !== "Citizen"
       ? [{ href: "/monitoring", label: "Monitoring", key: "monitoring" }]
       : [
           { href: "/dashboard", label: "Dashboard",       key: "dashboard"  },

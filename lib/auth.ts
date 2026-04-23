@@ -2,22 +2,33 @@ import type { AppUser, UserRole } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────
 // Auth client — talks to Next.js API routes backed by MySQL.
-// The API routes themselves are created in Phase 3 of the migration.
-// Until then, these functions will throw a clear network error.
 // ─────────────────────────────────────────────────────────────
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
     credentials: "include",
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers ?? {}),
+    },
   });
   if (!res.ok) {
-    const msg = await res.text().catch(() => res.statusText);
-    throw new Error(msg || `Request failed (${res.status})`);
+    const text = await res.text().catch(() => res.statusText);
+    // API routes return { error } JSON — try to extract a readable message.
+    try {
+      const parsed = JSON.parse(text) as { error?: string };
+      throw new Error(parsed.error || text || `Request failed (${res.status})`);
+    } catch {
+      throw new Error(text || `Request failed (${res.status})`);
+    }
   }
-  return res.json() as Promise<T>;
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+function postJson<T>(url: string, body: unknown): Promise<T> {
+  return requestJson<T>(url, { method: "POST", body: JSON.stringify(body) });
 }
 
 // ── Registration ────────────────────────────────────────────────────────────
@@ -28,7 +39,6 @@ export async function registerUser(input: {
   role: UserRole;
   contactNumber?: string;
   address?: string;
-  position?: string;
 }): Promise<AppUser> {
   return postJson<AppUser>("/api/register", input);
 }
@@ -36,6 +46,59 @@ export async function registerUser(input: {
 // ── Login ────────────────────────────────────────────────────────────────────
 export async function loginUser(email: string, password: string): Promise<AppUser> {
   return postJson<AppUser>("/api/login", { email, password });
+}
+
+// ── Admin management (Captain-only for mutations) ───────────────────────────
+export type AdminStatus = "Pending" | "Approved" | "Rejected";
+
+export interface AdminUserEntry {
+  uid: string;
+  fullName: string;
+  email: string;
+  role: "Captain" | "Admin";
+  status: AdminStatus;
+  createdAt: string;
+}
+
+export async function createAdminUser(input: {
+  fullName: string;
+  email: string;
+  password: string;
+}): Promise<AdminUserEntry> {
+  return postJson<AdminUserEntry>("/api/admin/users", input);
+}
+
+// Self-promotes the signed-in Approved Admin to Barangay Captain. Works only
+// when the system currently has no Captain. See the server route for details.
+export async function claimCaptainRole(): Promise<AdminUserEntry> {
+  return postJson<AdminUserEntry>("/api/admin/users/bootstrap-captain", {});
+}
+
+export async function listAdminUsers(): Promise<AdminUserEntry[]> {
+  return requestJson<AdminUserEntry[]>("/api/admin/users");
+}
+
+export async function setAdminStatus(
+  uid: string,
+  status: Exclude<AdminStatus, "Pending">,
+): Promise<AdminUserEntry> {
+  return requestJson<AdminUserEntry>(`/api/admin/users/${encodeURIComponent(uid)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export interface DeleteAdminResult {
+  ok: true;
+  selfRemoved: boolean;
+  promoted: { uid: string; fullName: string; email: string } | null;
+}
+
+export async function deleteAdminUser(uid: string): Promise<DeleteAdminResult> {
+  return requestJson<DeleteAdminResult>(
+    `/api/admin/users/${encodeURIComponent(uid)}`,
+    { method: "DELETE" },
+  );
 }
 
 // ── Get current profile ──────────────────────────────────────────────────────

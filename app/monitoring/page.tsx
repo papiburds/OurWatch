@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getCurrentUserProfile } from "@/lib/auth";
+import {
+  claimCaptainRole,
+  createAdminUser,
+  deleteAdminUser,
+  getCurrentUserProfile,
+  listAdminUsers,
+  setAdminStatus,
+  type AdminUserEntry,
+} from "@/lib/auth";
 import { deleteIncident, subscribeToAllIncidents, updateIncidentStatus } from "@/lib/incidents";
 import { useToast } from "@/app/toast-provider";
 import type { Incident } from "@/lib/types";
@@ -38,6 +46,8 @@ export default function MonitoringPage() {
 
   const [reports,    setReports]    = useState<Incident[]>([]);
   const [authorized, setAuthorized] = useState(false);
+  const [userRole,   setUserRole]   = useState<"Citizen" | "Captain" | "Admin">("Citizen");
+  const [currentUid, setCurrentUid] = useState<string | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [tabFilter,    setTabFilter]    = useState<Incident["status"]>("Pending");
   const [confirm,      setConfirm]      = useState<ConfirmState | null>(null);
@@ -45,24 +55,123 @@ export default function MonitoringPage() {
   const [rejectNote,   setRejectNote]   = useState("");
   const [updating,     setUpdating]     = useState(false);
   const [deleting,     setDeleting]     = useState(false);
+  const [addAdminOpen, setAddAdminOpen] = useState(false);
+  const [addAdminBusy, setAddAdminBusy] = useState(false);
+  const [addAdminError, setAddAdminError] = useState("");
+  const [adminUsers, setAdminUsers] = useState<AdminUserEntry[]>([]);
+  const [adminListLoading, setAdminListLoading] = useState(false);
+  const [adminActionBusyId, setAdminActionBusyId] = useState<string | null>(null);
+  const [adminToDelete, setAdminToDelete] = useState<AdminUserEntry | null>(null);
+  const [claimBusy, setClaimBusy] = useState(false);
+
+  const refreshAdminUsers = async () => {
+    setAdminListLoading(true);
+    try {
+      const list = await listAdminUsers();
+      setAdminUsers(list);
+    } catch {
+      // Non-fatal — leave existing list in place.
+    } finally {
+      setAdminListLoading(false);
+    }
+  };
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
     (async () => {
       const profile = await getCurrentUserProfile();
-      if (!profile || profile.role !== "Captain") {
+      if (!profile || profile.role === "Citizen") {
         setTimeout(() => router.push("/dashboard"), 0);
         return;
       }
+      setUserRole(profile.role);
+      setCurrentUid(profile.uid);
       setAuthorized(true);
       unsub = subscribeToAllIncidents((items) => {
         setReports(items);
         setLoading(false);
       });
+      await refreshAdminUsers();
     })().catch(() => undefined);
     return () => unsub?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleApproveAdmin = async (admin: AdminUserEntry) => {
+    setAdminActionBusyId(admin.uid);
+    try {
+      await setAdminStatus(admin.uid, "Approved");
+      showToast(`Approved ${admin.fullName}.`, "success");
+      await refreshAdminUsers();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to approve admin.";
+      showToast(msg, "error");
+    } finally {
+      setAdminActionBusyId(null);
+    }
+  };
+
+  const handleRejectAdmin = async (admin: AdminUserEntry) => {
+    setAdminActionBusyId(admin.uid);
+    try {
+      await setAdminStatus(admin.uid, "Rejected");
+      showToast(`Rejected ${admin.fullName}.`, "success");
+      await refreshAdminUsers();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to reject admin.";
+      showToast(msg, "error");
+    } finally {
+      setAdminActionBusyId(null);
+    }
+  };
+
+  const handleClaimCaptain = async () => {
+    setClaimBusy(true);
+    try {
+      await claimCaptainRole();
+      showToast("You are now the Barangay Captain.", "success");
+      // Refresh the signed-in profile so userRole updates → Captain-only
+      // actions (Add/Approve/Reject/Delete) become available without reload.
+      const profile = await getCurrentUserProfile();
+      if (profile) {
+        setUserRole(profile.role);
+        setCurrentUid(profile.uid);
+      }
+      await refreshAdminUsers();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to claim Captain role.";
+      showToast(msg, "error");
+    } finally {
+      setClaimBusy(false);
+    }
+  };
+
+  const handleDeleteAdmin = async () => {
+    if (!adminToDelete) return;
+    setAdminActionBusyId(adminToDelete.uid);
+    try {
+      const result = await deleteAdminUser(adminToDelete.uid);
+      if (result.promoted) {
+        showToast(
+          `Removed ${adminToDelete.fullName}. ${result.promoted.fullName} is now the Barangay Captain.`,
+          "success",
+        );
+      } else {
+        showToast(`Removed ${adminToDelete.fullName}.`, "success");
+      }
+      setAdminToDelete(null);
+      if (result.selfRemoved) {
+        setTimeout(() => router.push("/login"), 400);
+        return;
+      }
+      await refreshAdminUsers();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to remove admin.";
+      showToast(msg, "error");
+    } finally {
+      setAdminActionBusyId(null);
+    }
+  };
 
   const counts = useMemo(() => ({
     total:    reports.length,
@@ -137,8 +246,24 @@ export default function MonitoringPage() {
 
       <main className="px-8 py-8 max-w-6xl mx-auto">
         <div className="mb-7">
-          <h2 style={S.text} className="text-3xl font-black tracking-tight">Monitoring Dashboard</h2>
-          <p style={S.text2} className="text-sm mt-1">Manage and track incident reports — Barangay Official View</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 style={S.text} className="text-3xl font-black tracking-tight">Monitoring Dashboard</h2>
+              <p style={S.text2} className="text-sm mt-1">Manage and track incident reports — Administrative View</p>
+            </div>
+            {userRole === "Captain" && (
+              <button
+                onClick={() => {
+                  setAddAdminError("");
+                  setAddAdminOpen(true);
+                }}
+                className="px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition hover:opacity-90"
+                style={{ backgroundColor: "var(--ow-accent)" }}
+              >
+                Add Administrative User
+              </button>
+            )}
+          </div>
         </div>
 
         {loading ? <SkeletonDashboard /> : (
@@ -250,6 +375,211 @@ export default function MonitoringPage() {
                   <p style={S.text3} className="text-sm font-medium">No {tabFilter.toLowerCase()} reports.</p>
                 </div>
               )}
+            </div>
+
+            {/* Admin Management — visible to Captain and Admin (Admin gets read-only) */}
+            <div style={S.card} className="rounded-2xl border shadow-sm p-6 mb-6">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                  <h3 style={S.text} className="text-base font-bold">Admin Management</h3>
+                  <p style={S.text3} className="text-xs mt-0.5">
+                    {userRole === "Captain"
+                      ? "Assign administrative privileges, approve or reject pending admins, or remove them."
+                      : adminUsers.some((a) => a.role === "Captain")
+                      ? "Read-only list of administrative users."
+                      : "Read-only list. Claim the Captain role below to enable admin management."}
+                  </p>
+                </div>
+                {userRole === "Captain" && (
+                  <button
+                    onClick={() => {
+                      setAddAdminError("");
+                      setAddAdminOpen(true);
+                    }}
+                    className="px-3 py-2 rounded-xl text-xs font-semibold text-white transition hover:opacity-90"
+                    style={{ backgroundColor: "var(--ow-accent)" }}
+                  >
+                    + Add Admin
+                  </button>
+                )}
+              </div>
+
+              {adminListLoading && adminUsers.length === 0 ? (
+                <p style={S.text3} className="text-sm">Loading…</p>
+              ) : adminUsers.length === 0 ? (
+                <p style={S.text3} className="text-sm">No administrative users yet.</p>
+              ) : (() => {
+                const isActive = (a: AdminUserEntry) =>
+                  a.role === "Captain" || (a.role === "Admin" && a.status === "Approved");
+                const activeCount = adminUsers.filter(isActive).length;
+                const hasCaptain = adminUsers.some((a) => a.role === "Captain");
+                const canClaimCaptain =
+                  userRole === "Admin" &&
+                  !hasCaptain &&
+                  adminUsers.some(
+                    (a) =>
+                      a.uid === currentUid &&
+                      a.role === "Admin" &&
+                      a.status === "Approved",
+                  );
+                const blockMsg =
+                  "At least one administrator must remain. Create and approve another administrator first.";
+
+                return (
+                  <>
+                    {canClaimCaptain && (
+                      <div
+                        className="rounded-xl border px-4 py-3 mb-3 flex flex-wrap items-center gap-3"
+                        style={{
+                          backgroundColor: "#fff7ed",
+                          borderColor: "#fdba74",
+                          color: "#9a3412",
+                        }}
+                      >
+                        <div className="flex-1 min-w-[200px]">
+                          <p className="text-sm font-bold mb-0.5">
+                            No Barangay Captain is currently assigned.
+                          </p>
+                          <p className="text-xs leading-relaxed">
+                            As an Approved Admin, you can take over so admin
+                            management (adding, approving, removing admins)
+                            remains available. This action cannot be undone
+                            except by another captaincy transfer.
+                          </p>
+                        </div>
+                        <button
+                          onClick={handleClaimCaptain}
+                          disabled={claimBusy}
+                          className="px-3 py-2 rounded-xl text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                          style={{ backgroundColor: claimBusy ? "#9ca3af" : "#ea580c" }}
+                        >
+                          {claimBusy ? "Claiming…" : "Claim Captain Role"}
+                        </button>
+                      </div>
+                    )}
+                    <p style={S.text3} className="text-xs mb-3">
+                      Active administrators:{" "}
+                      <strong style={S.text2}>{activeCount}</strong>. The system
+                      requires at least one at all times.
+                    </p>
+                    <div className="space-y-2">
+                      {adminUsers.map((admin) => {
+                        const busy = adminActionBusyId === admin.uid;
+                        const isCaptainEntry = admin.role === "Captain";
+                        const isSelf = currentUid !== null && admin.uid === currentUid;
+                        const countsAsActive = isActive(admin);
+                        const wouldLeaveZero = countsAsActive && activeCount <= 1;
+
+                        const statusColors = isCaptainEntry
+                          ? { bg: "#dcfce7", text: "#166534" }
+                          : admin.status === "Approved"
+                          ? { bg: "#dcfce7", text: "#166534" }
+                          : admin.status === "Rejected"
+                          ? { bg: "#fee2e2", text: "#b91c1c" }
+                          : { bg: "#fef3c7", text: "#92400e" };
+                        const statusLabel = isCaptainEntry ? "Active" : admin.status;
+
+                        return (
+                          <div
+                            key={admin.uid}
+                            style={S.card2}
+                            className="rounded-xl border px-4 py-3 flex flex-wrap items-center gap-3"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p style={S.text} className="font-semibold text-sm truncate">
+                                  {admin.fullName}
+                                  {isSelf && (
+                                    <span style={S.text3} className="text-[11px] font-normal ml-1">
+                                      (you)
+                                    </span>
+                                  )}
+                                </p>
+                                <span
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide"
+                                  style={{
+                                    backgroundColor: isCaptainEntry ? "#e0e7ff" : "#f1f5f9",
+                                    color: isCaptainEntry ? "#3730a3" : "#475569",
+                                  }}
+                                >
+                                  {isCaptainEntry ? "Barangay Captain" : "Admin"}
+                                </span>
+                                <span
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                  style={{
+                                    backgroundColor: statusColors.bg,
+                                    color: statusColors.text,
+                                  }}
+                                >
+                                  {statusLabel}
+                                </span>
+                              </div>
+                              <p style={S.text3} className="text-xs mt-0.5 truncate">
+                                {admin.email}
+                              </p>
+                            </div>
+
+                            {userRole === "Captain" && (
+                              <div className="flex flex-wrap gap-2 items-center">
+                                {/* Approve / Reject apply only to Admin accounts */}
+                                {!isCaptainEntry && admin.status !== "Approved" && (
+                                  <button
+                                    onClick={() => handleApproveAdmin(admin)}
+                                    disabled={busy}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold transition hover:opacity-80 disabled:opacity-50"
+                                    style={{
+                                      backgroundColor: "#dcfce7",
+                                      color: "#166534",
+                                      border: "1px solid #86efac",
+                                    }}
+                                  >
+                                    Approve
+                                  </button>
+                                )}
+                                {!isCaptainEntry && admin.status !== "Rejected" && (() => {
+                                  const rejectBlocked =
+                                    admin.status === "Approved" && activeCount <= 1;
+                                  return (
+                                    <button
+                                      onClick={() => handleRejectAdmin(admin)}
+                                      disabled={busy || rejectBlocked}
+                                      title={rejectBlocked ? blockMsg : undefined}
+                                      className="px-3 py-1.5 rounded-lg text-xs font-bold transition hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      style={{
+                                        backgroundColor: "#fef3c7",
+                                        color: "#92400e",
+                                        border: "1px solid #fcd34d",
+                                      }}
+                                    >
+                                      Reject
+                                    </button>
+                                  );
+                                })()}
+
+                                {/* Delete — available for ANY row including Captain self-removal,
+                                    but blocked if it would leave zero administrators. */}
+                                <button
+                                  onClick={() => setAdminToDelete(admin)}
+                                  disabled={busy || wouldLeaveZero}
+                                  title={wouldLeaveZero ? blockMsg : undefined}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-bold transition hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  style={{
+                                    backgroundColor: "#fff1f2",
+                                    color: "#b91c1c",
+                                    border: "1px solid #fecdd3",
+                                  }}
+                                >
+                                  {isSelf ? "Step Down" : "Delete"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Recent Official Updates */}
@@ -393,6 +723,216 @@ export default function MonitoringPage() {
                     : `Mark ${confirm.status}`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete admin confirm modal ── */}
+      {adminToDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={() => adminActionBusyId !== adminToDelete.uid && setAdminToDelete(null)}
+        >
+          <div
+            style={S.card}
+            className="rounded-2xl border shadow-2xl p-6 w-full max-w-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4"
+              style={{ backgroundColor: "#fee2e2" }}
+            >
+              <svg
+                className="w-6 h-6"
+                style={{ color: "#dc2626" }}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v2m0 4h.01M4.93 19h14.14a2 2 0 001.74-3l-7.07-12a2 2 0 00-3.48 0l-7.07 12a2 2 0 001.74 3z"
+                />
+              </svg>
+            </div>
+            <h3 style={S.text} className="text-lg font-bold text-center mb-1">
+              {currentUid === adminToDelete.uid
+                ? "Step down as Barangay Captain?"
+                : "Remove administrative user?"}
+            </h3>
+            <p style={S.text2} className="text-sm text-center mb-1">
+              {currentUid === adminToDelete.uid ? (
+                <>
+                  You will <strong style={{ color: "#b91c1c" }}>lose access</strong> to
+                  the monitoring dashboard and be signed out.
+                </>
+              ) : (
+                <>
+                  <strong>{adminToDelete.fullName}</strong> will lose administrative
+                  access.
+                </>
+              )}
+            </p>
+            <p style={S.text3} className="text-xs text-center mb-4">{adminToDelete.email}</p>
+
+            {/* Successor preview: if removing the last Captain, auto-promote the senior Approved Admin */}
+            {(() => {
+              if (adminToDelete.role !== "Captain") return null;
+              const otherCaptains = adminUsers.filter(
+                (a) => a.role === "Captain" && a.uid !== adminToDelete.uid,
+              );
+              if (otherCaptains.length > 0) return null;
+              const successor = adminUsers
+                .filter(
+                  (a) =>
+                    a.role === "Admin" &&
+                    a.status === "Approved" &&
+                    a.uid !== adminToDelete.uid,
+                )
+                .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+              if (!successor) return null;
+              return (
+                <div
+                  className="rounded-xl border px-3 py-2 text-xs mb-4"
+                  style={{
+                    backgroundColor: "#eff6ff",
+                    color: "#1e40af",
+                    borderColor: "#bfdbfe",
+                  }}
+                >
+                  <strong>{successor.fullName}</strong> ({successor.email}) will be
+                  promoted to Barangay Captain so admin management remains
+                  available.
+                </div>
+              );
+            })()}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setAdminToDelete(null)}
+                disabled={adminActionBusyId === adminToDelete.uid}
+                className="flex-1 py-2.5 rounded-xl border text-sm font-semibold hover:opacity-80 transition"
+                style={{ ...S.card2, color: "var(--ow-text-2)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAdmin}
+                disabled={adminActionBusyId === adminToDelete.uid}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
+                style={{
+                  backgroundColor:
+                    adminActionBusyId === adminToDelete.uid ? "#374151" : "#dc2626",
+                }}
+              >
+                {adminActionBusyId === adminToDelete.uid
+                  ? "Removing…"
+                  : currentUid === adminToDelete.uid
+                  ? "Step Down"
+                  : "Remove Admin"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add admin modal ── */}
+      {addAdminOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={() => !addAdminBusy && setAddAdminOpen(false)}
+        >
+          <div
+            style={S.card}
+            className="rounded-2xl border shadow-2xl p-6 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={S.text} className="text-lg font-bold mb-1">
+              Add Administrative User
+            </h3>
+            <p style={S.text2} className="text-sm mb-4">
+              Create an account with administrative privileges similar to this dashboard.
+            </p>
+            {addAdminError && (
+              <div
+                className="rounded-xl border px-3 py-2 text-xs mb-4"
+                style={{ backgroundColor: "#fee2e2", color: "#b91c1c", borderColor: "#fecaca" }}
+              >
+                {addAdminError}
+              </div>
+            )}
+            <form
+              className="space-y-3"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAddAdminBusy(true);
+                setAddAdminError("");
+                const formData = new FormData(e.currentTarget);
+                const fullName = String(formData.get("full_name") ?? "").trim();
+                const email = String(formData.get("email") ?? "").trim().toLowerCase();
+                const password = String(formData.get("password") ?? "");
+
+                try {
+                  await createAdminUser({ fullName, email, password });
+                  showToast("Administrative user created. Pending approval.", "success");
+                  setAddAdminOpen(false);
+                  await refreshAdminUsers();
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Failed to create administrative user.";
+                  setAddAdminError(msg);
+                } finally {
+                  setAddAdminBusy(false);
+                }
+              }}
+            >
+              <input
+                name="full_name"
+                required
+                placeholder="Full name"
+                className="w-full px-3 py-2 rounded-xl border text-sm focus:outline-none"
+                style={{ ...S.card2, color: "var(--ow-text)" }}
+              />
+              <input
+                name="email"
+                type="email"
+                required
+                placeholder="email@example.com"
+                className="w-full px-3 py-2 rounded-xl border text-sm focus:outline-none"
+                style={{ ...S.card2, color: "var(--ow-text)" }}
+              />
+              <input
+                name="password"
+                type="password"
+                required
+                minLength={8}
+                placeholder="Temporary password"
+                className="w-full px-3 py-2 rounded-xl border text-sm focus:outline-none"
+                style={{ ...S.card2, color: "var(--ow-text)" }}
+              />
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAddAdminOpen(false)}
+                  disabled={addAdminBusy}
+                  className="flex-1 py-2.5 rounded-xl border text-sm font-semibold hover:opacity-80 transition"
+                  style={{ ...S.card2, color: "var(--ow-text-2)" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addAdminBusy}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition hover:opacity-90"
+                  style={{ backgroundColor: addAdminBusy ? "#374151" : "var(--ow-accent)" }}
+                >
+                  {addAdminBusy ? "Creating…" : "Create Admin"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

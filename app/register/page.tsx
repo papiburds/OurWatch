@@ -5,7 +5,6 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState, FormEvent } from "react";
 import { registerUser } from "@/lib/auth";
-import type { UserRole } from "@/lib/types";
 import { useToast } from "@/app/toast-provider";
 
 const STRONG_PASSWORD_REGEX =
@@ -16,7 +15,6 @@ export default function RegisterPage() {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [role, setRole] = useState<UserRole>("Citizen");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -32,7 +30,6 @@ export default function RegisterPage() {
     const confirmPassword = String(formData.get("confirm_password") || "");
     const contactNumber = String(formData.get("contact_number") || "").trim();
     const address = String(formData.get("address") || "").trim();
-    const position = String(formData.get("position") || "").trim();
 
     if (!email.endsWith("@gmail.com")) {
       setError("Only @gmail.com email addresses are allowed.");
@@ -54,8 +51,8 @@ export default function RegisterPage() {
       return;
     }
 
-    if (role === "Citizen" && !contactNumber) {
-      setError("Contact number is required for Citizen accounts.");
+    if (!contactNumber) {
+      setError("Contact number is required.");
       setLoading(false);
       return;
     }
@@ -65,10 +62,9 @@ export default function RegisterPage() {
         fullName,
         email,
         password,
-        role,
-        contactNumber: contactNumber || undefined,
+        role: "Citizen",
+        contactNumber,
         address: address || undefined,
-        position: position || undefined,
       });
       showToast("Account created successfully!", "success");
       router.push("/login");
@@ -219,12 +215,12 @@ export default function RegisterPage() {
           {/* Contact Number */}
           <div>
             <label style={labelStyle} className="block text-xs font-semibold uppercase tracking-wider mb-1.5">
-              Contact Number {role === "Citizen" && <span style={{ color: "#f87171" }}>*</span>}
+              Contact Number <span style={{ color: "#f87171" }}>*</span>
             </label>
             <input
               name="contact_number"
               type="tel"
-              required={role === "Citizen"}
+              required
               style={fieldStyle}
               className="w-full px-4 py-3 rounded-xl border text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
               placeholder="09XXXXXXXXX"
@@ -245,38 +241,15 @@ export default function RegisterPage() {
             />
           </div>
 
-          {/* Role */}
-          <div>
-            <label style={labelStyle} className="block text-xs font-semibold uppercase tracking-wider mb-1.5">
-              Role
-            </label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as UserRole)}
-              style={fieldStyle}
-              className="w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-            >
-              <option value="Citizen">Citizen</option>
-              <option value="Captain">Barangay Official (Captain)</option>
-            </select>
-          </div>
-
-          {/* Position — shown only for Officials */}
-          {role === "Captain" && (
-            <div>
-              <label style={labelStyle} className="block text-xs font-semibold uppercase tracking-wider mb-1.5">
-                Position
-              </label>
-              <input
-                name="position"
-                type="text"
-                style={fieldStyle}
-                className="w-full px-4 py-3 rounded-xl border text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-                placeholder="Barangay Captain"
-                defaultValue="Barangay Captain"
-              />
-            </div>
-          )}
+          {/* Info note: all self-registrations are Citizen */}
+          <p
+            style={{ color: "#64748b", backgroundColor: "rgba(148,163,184,0.08)" }}
+            className="text-xs rounded-xl px-3 py-2 leading-relaxed"
+          >
+            All new accounts are created as <strong>Citizen</strong>. Administrative
+            access is assigned exclusively by the Barangay Captain from the
+            monitoring dashboard.
+          </p>
 
           {/* Submit */}
           <button

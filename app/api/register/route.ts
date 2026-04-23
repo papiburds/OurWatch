@@ -1,21 +1,21 @@
 // POST /api/register
-// Creates a new ACCOUNT row, plus a matching CITIZEN or BRGY_OFFICIAL row,
-// then sets the session cookie. Responds with the AppUser shape.
+// Creates a Citizen ACCOUNT + CITIZEN row, then sets the session cookie.
+// Self-registration is restricted to the Citizen role. The Barangay Captain
+// account is created via seed. Additional administrative accounts are
+// provisioned by the Captain from the monitoring dashboard.
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/api-helpers";
 import { setSessionCookie } from "@/lib/session";
-import type { AppUser, UserRole } from "@/lib/types";
+import type { AppUser } from "@/lib/types";
 
 interface RegisterBody {
   fullName?: string;
   email?: string;
   password?: string;
-  role?: UserRole;
   contactNumber?: string;
   address?: string;
-  position?: string; // Officials only
 }
 
 export async function POST(req: Request) {
@@ -29,7 +29,6 @@ export async function POST(req: Request) {
   const fullName = (body.fullName ?? "").trim();
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
-  const role: UserRole = body.role === "Captain" ? "Captain" : "Citizen";
   const contactNumber = (body.contactNumber ?? "").trim();
   const address = (body.address ?? "").trim() || null;
 
@@ -39,9 +38,9 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  if (role === "Citizen" && !contactNumber) {
+  if (!contactNumber) {
     return NextResponse.json(
-      { error: "Contact number is required for Citizen accounts." },
+      { error: "Contact number is required." },
       { status: 400 },
     );
   }
@@ -54,51 +53,25 @@ export async function POST(req: Request) {
     );
   }
 
-  // If registering as a Citizen, the contact_number must be unique too.
-  if (role === "Citizen") {
-    const phoneTaken = await prisma.citizen.findUnique({
-      where: { contactNumber },
-    });
-    if (phoneTaken) {
-      return NextResponse.json(
-        { error: "This contact number is already registered." },
-        { status: 409 },
-      );
-    }
+  const phoneTaken = await prisma.citizen.findUnique({
+    where: { contactNumber },
+  });
+  if (phoneTaken) {
+    return NextResponse.json(
+      { error: "This contact number is already registered." },
+      { status: 409 },
+    );
   }
 
   const passwordHash = await hashPassword(password);
 
-  // Create the dependent profile first (Citizen or Official), then the
-  // Account row that references it.
   try {
     const account = await prisma.$transaction(async (tx) => {
-      if (role === "Citizen") {
-        await tx.citizen.create({
-          data: {
-            contactNumber,
-            fullName,
-            address,
-          },
-        });
-        return tx.account.create({
-          data: {
-            name: fullName,
-            email,
-            passwordHash,
-            address,
-            contactInformation: contactNumber,
-            contactNumber,
-          },
-        });
-      }
-
-      const official = await tx.brgyOfficial.create({
+      await tx.citizen.create({
         data: {
-          officialName: fullName,
-          position: (body.position ?? "Barangay Captain").trim() || "Barangay Captain",
-          contactInfo: contactNumber || null,
-          accountStatus: "Active",
+          contactNumber,
+          fullName,
+          address,
         },
       });
       return tx.account.create({
@@ -106,9 +79,11 @@ export async function POST(req: Request) {
           name: fullName,
           email,
           passwordHash,
+          role: "Citizen",
+          status: "Approved",
           address,
-          contactInformation: contactNumber || null,
-          officialId: official.officialId,
+          contactInformation: contactNumber,
+          contactNumber,
         },
       });
     });
@@ -116,15 +91,15 @@ export async function POST(req: Request) {
     await setSessionCookie({
       accountId: account.accountId,
       email: account.email,
-      role,
+      role: "Citizen",
     });
 
     const user: AppUser = {
       uid: String(account.accountId),
       fullName,
       email: account.email,
-      role,
-      contactNumber: role === "Citizen" ? contactNumber : undefined,
+      role: "Citizen",
+      contactNumber,
       address: address ?? undefined,
       createdAt: account.createdAt.toISOString(),
     };

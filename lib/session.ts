@@ -23,7 +23,7 @@ function getSecretKey(): Uint8Array {
 export interface SessionPayload {
   accountId: number;
   email: string;
-  role: "Citizen" | "Captain";
+  role: "Citizen" | "Captain" | "Admin";
   [key: string]: unknown; // jose requires JWTPayload shape
 }
 

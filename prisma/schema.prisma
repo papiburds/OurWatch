@@ -25,6 +25,8 @@ model Account {
   name               String        @db.VarChar(191)
   email              String        @unique @db.VarChar(191)
   passwordHash       String        @map("password_hash") @db.VarChar(191)
+  role               AccountRole   @default(Citizen) @map("role")
+  status             AccountStatus @default(Approved) @map("status")
   address            String?       @map("Address") @db.VarChar(500)
   sex                String?       @db.VarChar(20)
   contactInformation String?       @map("contact_information") @db.VarChar(50)
@@ -39,6 +41,18 @@ model Account {
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
   @@map("ACCOUNT")
+}
+
+enum AccountRole {
+  Citizen
+  Captain
+  Admin
+}
+
+enum AccountStatus {
+  Pending
+  Approved
+  Rejected
 }
 
 // ── CITIZEN ──────────────────────────────────────────────────────────────────

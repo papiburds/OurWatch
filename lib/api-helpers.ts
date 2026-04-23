@@ -23,6 +23,19 @@ export function verifyPassword(plain: string, hash: string): Promise<boolean> {
   return bcrypt.compare(plain, hash);
 }
 
+export function getResolvedRole(account: {
+  role: "Citizen" | "Captain" | "Admin";
+  officialId: number | null;
+}): AppUser["role"] {
+  if (account.role === "Captain" && account.officialId) return "Captain";
+  if (account.role === "Admin") return "Admin";
+  return "Citizen";
+}
+
+export function isAdminRole(role: AppUser["role"]): boolean {
+  return role === "Captain" || role === "Admin";
+}
+
 // ── Session → AppUser ────────────────────────────────────────────────────────
 // Loads the authenticated user from the session cookie and maps DB rows
 // (ACCOUNT + CITIZEN | BRGY_OFFICIAL) into the flat AppUser shape.
@@ -36,10 +49,9 @@ export async function getCurrentUser(): Promise<AppUser | null> {
   });
   if (!account) return null;
 
-  const isCaptain = !!account.officialId;
-  const role = isCaptain ? "Captain" : "Citizen";
+  const role = getResolvedRole(account);
   const fullName =
-    (isCaptain ? account.official?.officialName : account.citizen?.fullName) ||
+    (role === "Captain" ? account.official?.officialName : account.citizen?.fullName) ||
     account.name;
 
   return {

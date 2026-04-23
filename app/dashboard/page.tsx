@@ -38,7 +38,7 @@ export default function CitizenDashboard() {
       const profile = await getCurrentUserProfile();
       if (!profile) { setTimeout(() => router.push("/login"), 0); return; }
       // Officials only use the Monitoring dashboard.
-      if (profile.role === "Captain") { setTimeout(() => router.push("/monitoring"), 0); return; }
+      if (profile.role !== "Citizen") { setTimeout(() => router.push("/monitoring"), 0); return; }
       setUserName(profile.fullName);
       unsub = subscribeToUserIncidents(profile.uid, (items) => {
         setReports(items);
@@ -101,7 +101,6 @@ export default function CitizenDashboard() {
               <div>
                 <p style={S.text3} className="text-xs font-semibold uppercase tracking-wider mb-1">{s.label}</p>
                 <p style={S.text} className="text-4xl font-black">{s.val}</p>
-                <p style={S.text3} className="text-[10px] mt-1.5">+12% from last week</p>
               </div>
               <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold"
                 style={{ backgroundColor: s.iconBg, color: s.iconCol }}>
