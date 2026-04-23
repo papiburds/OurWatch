@@ -76,10 +76,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const prevMap = useRef<Map<string, string>>(new Map()); // id → status
   const initialized = useRef(false);
   // Current user role — used to decide whether "new incident" pings fire.
-  // Only Barangay Officials (Captains) should receive notifications when a
-  // fresh report appears; citizens only get status-change notifications
+  // Only administrative users (Captain or Admin) should receive notifications
+  // when a fresh report appears; citizens only get status-change notifications
   // (approved / rejected / resolved).
-  const roleRef = useRef<"Captain" | "Citizen" | null>(null);
+  const roleRef = useRef<"Captain" | "Admin" | "Citizen" | null>(null);
 
   const addNotifs = useCallback((items: NotifItem[]) => {
     if (items.length === 0) return;
@@ -110,7 +110,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           // Citizens intentionally receive no notification on their own
           // submission; they only see updates when the report status
           // changes (Verified / Resolved / Rejected).
-          if (roleRef.current === "Captain") {
+          if (roleRef.current === "Captain" || roleRef.current === "Admin") {
             newItems.push({
               id: `${r.id}-new-${Date.now()}`,
               reportId: r.id,
