@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "OurWatch",
-  description: "Crowd-Sourcing Incident Alerts",
+  description: "Crowd-Sourcing Incident Alerts.",
   icons: {
     icon: [
       { url: "/OurWatch_LOGO.png", type: "image/png" },
