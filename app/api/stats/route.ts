@@ -42,7 +42,7 @@ export async function GET() {
 
     return NextResponse.json({
       community: "Barangay Cabulijan",
-      population: 37_640,
+      population: 2700,
       total,
       avgPerDay: Number(avgPerDay.toFixed(2)),
       responseRate,
